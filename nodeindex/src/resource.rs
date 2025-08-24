@@ -17,21 +17,21 @@ impl ResourceSubscription for SubscriptionBuilder<RemoteModule> {
         if n == 0 {
             // beginning of subscription cycle
             println!("subscribing:");
-            print!("  tier {:>2} ", ALL[n].tier);
-        } else if ALL[n].tier != ALL[n - 1].tier {
+            print!("  tier {:>2} ", RESOURCES[n].tier);
+        } else if RESOURCES[n].tier != RESOURCES[n - 1].tier {
             // end of tier, next tier starting
             println!("!");
-            print!("  tier {:>2} ", ALL[n].tier);
+            print!("  tier {:>2} ", RESOURCES[n].tier);
         } else {
             // mid tier
             print!(".");
         }
         stdout().flush().unwrap();
 
-        let res = ALL[n].id;
+        let res = RESOURCES[n].id;
         self.on_error(on_error)
             .on_applied(move |ctx| {
-                if n + 1 == ALL.len() {
+                if n + 1 == RESOURCES.len() {
                     println!("!");
                     stdout().flush().unwrap();
                     on_applied(ctx);
@@ -47,9 +47,9 @@ impl ResourceSubscription for SubscriptionBuilder<RemoteModule> {
     }
 }
 
-struct Resource { tier: u8, id: i32, name: &'static str }
+pub struct Resource { pub tier: u8, pub id: i32, pub name: &'static str }
 
-const ALL: [Resource; 433] = [
+pub const RESOURCES: [Resource; 433] = [
     Resource { tier: 10, id:         102, name: "White Lily"                                 },
     Resource { tier: 10, id:    70663203, name: "Tier 10 Boulder"                            },
     Resource { tier: 10, id:    93152192, name: "Flawless Hieroglyphs"                       },
