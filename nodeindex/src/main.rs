@@ -15,6 +15,7 @@ use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, RwLock};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tower_http::compression::CompressionLayer;
 
 type NodeMap = HashMap<u64, (i32, i32)>;
 
@@ -139,6 +140,7 @@ async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, RwLoc
 async fn server(rx: oneshot::Receiver<()>, map: Arc<HashMap<i32, RwLock<NodeMap>>>) {
     let app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
+        .layer(CompressionLayer::new().gzip(true).zstd(true))
         .with_state(map);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
