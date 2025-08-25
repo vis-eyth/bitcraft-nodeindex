@@ -1,6 +1,6 @@
 pub struct Resource { pub tier: u8, pub id: i32 }
 
-pub const RESOURCES: [Resource; 311] = [
+pub const RESOURCES: [Resource; 292] = [
     Resource { tier: 10, id:         102 }, // White Lily
     Resource { tier: 10, id:    70663203 }, // Tier 10 Boulder
     Resource { tier: 10, id:    93152192 }, // Flawless Hieroglyphs
@@ -127,12 +127,12 @@ pub const RESOURCES: [Resource; 311] = [
 //  Resource { tier:  6, id:         203 }, // Advanced Key Pedestal
 //  Resource { tier:  6, id:         204 }, // Power Source
 //  Resource { tier:  6, id:         205 }, // Broken Power Source
-    Resource { tier:  6, id:         206 }, // Collapsed Marble Pillars
+//  Resource { tier:  6, id:         206 }, // Collapsed Marble Pillars
 //  Resource { tier:  6, id:         207 }, // Advanced Door
 //  Resource { tier:  6, id:         208 }, // Right Power Core Pedestal
 //  Resource { tier:  6, id:         209 }, // Empty Power Core Pedestal
 //  Resource { tier:  6, id:         210 }, // Runic Door
-    Resource { tier:  6, id:         211 }, // Trap Rubble
+//  Resource { tier:  6, id:         211 }, // Trap Rubble
 //  Resource { tier:  6, id:         212 }, // Runic Door
 //  Resource { tier:  6, id:         213 }, // Mysterious Contraption
 //  Resource { tier:  6, id:         214 }, // Powered Contraption
@@ -248,11 +248,11 @@ pub const RESOURCES: [Resource; 311] = [
     Resource { tier:  3, id:         131 }, // Bullrushes
     Resource { tier:  3, id:         132 }, // Spanish Moss
     Resource { tier:  3, id:         142 }, // Neat Hieroglyphs
-    Resource { tier:  3, id:         153 }, // Fossils
-    Resource { tier:  3, id:         154 }, // Sandcovered Fossils
-    Resource { tier:  3, id:         215 }, // Vines T3
-    Resource { tier:  3, id:         216 }, // Root T3
-    Resource { tier:  3, id:         217 }, // Rubble T3
+//  Resource { tier:  3, id:         153 }, // Fossils
+//  Resource { tier:  3, id:         154 }, // Sandcovered Fossils
+//  Resource { tier:  3, id:         215 }, // Vines T3
+//  Resource { tier:  3, id:         216 }, // Root T3
+//  Resource { tier:  3, id:         217 }, // Rubble T3
 //  Resource { tier:  3, id:         218 }, // Enadarite Stand
 //  Resource { tier:  3, id:         219 }, // Key Mold Pedestal
 //  Resource { tier:  3, id:         220 }, // Empty Enadarite Stand
@@ -291,7 +291,7 @@ pub const RESOURCES: [Resource; 311] = [
     Resource { tier:  2, id:          49 }, // Sandstone Outcrop
     Resource { tier:  2, id:          61 }, // Pyrelite Vein
     Resource { tier:  2, id:          67 }, // Clay Mound
-    Resource { tier:  2, id:          77 }, // Prickly Pear
+//  Resource { tier:  2, id:          77 }, // Prickly Pear
     Resource { tier:  2, id:          79 }, // Chanterelles
     Resource { tier:  2, id:          80 }, // Honeyberry Bush
     Resource { tier:  2, id:          87 }, // Dandelions
@@ -299,10 +299,10 @@ pub const RESOURCES: [Resource; 311] = [
     Resource { tier:  2, id:         125 }, // Ferns
     Resource { tier:  2, id:         127 }, // Pine Weed
     Resource { tier:  2, id:         141 }, // Simple Hieroglyphs
-    Resource { tier:  2, id:         176 }, // Collapsed Pillars
-    Resource { tier:  2, id:         179 }, // Vines T2
-    Resource { tier:  2, id:         180 }, // Root T2
-    Resource { tier:  2, id:         181 }, // Rubble T2
+//  Resource { tier:  2, id:         176 }, // Collapsed Pillars
+//  Resource { tier:  2, id:         179 }, // Vines T2
+//  Resource { tier:  2, id:         180 }, // Root T2
+//  Resource { tier:  2, id:         181 }, // Rubble T2
 //  Resource { tier:  2, id:         190 }, // Key Pedestal
 //  Resource { tier:  2, id:         191 }, // Empty Key Pedestal
 //  Resource { tier:  2, id:         192 }, // Intricate Door
@@ -366,9 +366,9 @@ pub const RESOURCES: [Resource; 311] = [
     Resource { tier:  1, id:         152 }, // Gem Encrusted Stalagmite
     Resource { tier:  1, id:         156 }, // Wild Starbulb Plant
     Resource { tier:  1, id:         158 }, // Salt Deposit
-    Resource { tier:  1, id:         159 }, // Vines
-    Resource { tier:  1, id:         160 }, // Root
-    Resource { tier:  1, id:         161 }, // Rubble
+//  Resource { tier:  1, id:         159 }, // Vines
+//  Resource { tier:  1, id:         160 }, // Root
+//  Resource { tier:  1, id:         161 }, // Rubble
 //  Resource { tier:  1, id:         162 }, // Ancient Door
 //  Resource { tier:  1, id:         163 }, // Ancient Blue Door
 //  Resource { tier:  1, id:         164 }, // Ancient Red Door
@@ -377,17 +377,17 @@ pub const RESOURCES: [Resource; 311] = [
 //  Resource { tier:  1, id:         167 }, // Complicated Ancient Door
 //  Resource { tier:  1, id:         168 }, // Ancient Door
 //  Resource { tier:  1, id:         169 }, // Ancient Door
-    Resource { tier:  1, id:         170 }, // Large Rubble
+//  Resource { tier:  1, id:         170 }, // Large Rubble
 //  Resource { tier:  1, id:         171 }, // Ancient Brazier
 //  Resource { tier:  1, id:         172 }, // Ancient Brazier
 //  Resource { tier:  1, id:         173 }, // Lit Ancient Brazier
 //  Resource { tier:  1, id:         174 }, // Broken Ancient Brazier
-    Resource { tier:  1, id:         175 }, // Hexite Aurumite Axe
+//  Resource { tier:  1, id:         175 }, // Hexite Aurumite Axe
 //  Resource { tier:  1, id:         177 }, // Lit Wooden Brazier
 //  Resource { tier:  1, id:         178 }, // Wooden Brazier
 //  Resource { tier:  1, id:         182 }, // Lit Wooden Brazier
 //  Resource { tier:  1, id:         183 }, // Wooden Brazier
-    Resource { tier:  1, id:         184 }, // Collapsed Pillar
+//  Resource { tier:  1, id:         184 }, // Collapsed Pillar
 //  Resource { tier:  1, id:         185 }, // Ancient Adventurer's Letter
 //  Resource { tier:  1, id:         186 }, // Ancient Trapsmith's Note
 //  Resource { tier:  1, id:         187 }, // Baffled Adventurer's Note
@@ -406,7 +406,7 @@ pub const RESOURCES: [Resource; 311] = [
     Resource { tier:  1, id:     1012009 }, // Fully Grown Beech Tree
     Resource { tier:  1, id:     1012010 }, // Fully Grown Oak Tree
     Resource { tier:  1, id:     1020001 }, // Medium Ferralith Vein
-    Resource { tier:  1, id:     1090000 }, // Silken Hexmoths
+//  Resource { tier:  1, id:     1090000 }, // Silken Hexmoths
     Resource { tier:  1, id:     1110000 }, // Moonlit Crawdads
     Resource { tier:  1, id:     1110001 }, // School Of Breezy Fin Darters
     Resource { tier:  1, id:     1110002 }, // School Of Oceancrest Marlins
