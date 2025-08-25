@@ -171,9 +171,9 @@ async fn route_resource_id(
     Path(id): Path<i32>,
     state: State<Arc<HashMap<i32, NodeMap>>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let nodes =
-        if let Some(nodes) = state.get(&id) { nodes }
-        else { return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id))) };
+    let Some(nodes) = state.get(&id) else {
+        return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
+    };
     let nodes = nodes.read().await;
 
     Ok(Json(serde_json::json!({
