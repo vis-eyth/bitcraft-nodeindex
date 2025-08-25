@@ -1,6 +1,6 @@
 pub struct Resource { pub tier: u8, pub id: i32 }
 
-pub const RESOURCES: [Resource; 314] = [
+pub const RESOURCES: [Resource; 311] = [
     Resource { tier: 10, id:         102 }, // White Lily
     Resource { tier: 10, id:    70663203 }, // Tier 10 Boulder
     Resource { tier: 10, id:    93152192 }, // Flawless Hieroglyphs
@@ -423,7 +423,7 @@ pub const RESOURCES: [Resource; 314] = [
 //  Resource { tier:  1, id:   218270468 }, // Ferralith Outcrop Interior
 //  Resource { tier:  1, id:   322711580 }, // Faint Hexite Energy Font
 //  Resource { tier:  1, id:   474230316 }, // Ferralith Outcrop Interior Depleted
-    Resource { tier:  1, id:   763946195 }, // TEST BirdSpawn
+//  Resource { tier:  1, id:   763946195 }, // TEST BirdSpawn
     Resource { tier:  1, id:  1283632905 }, // Traveler's Fruit (Depleted)
     Resource { tier:  1, id:  1303955933 }, // Traveler's Tree
     Resource { tier:  1, id:  1435874592 }, // Traveler's Tree (Depleted)
@@ -431,7 +431,7 @@ pub const RESOURCES: [Resource; 314] = [
 //  Resource { tier:  1, id:  1917744937 }, // Ferralith Vein Interior Depleted
 //  Resource { tier:  1, id:  1962517199 }, // Ferralith Vein Interior
     Resource { tier:  1, id:  2144918116 }, // Daisy
-    Resource { tier:  0, id:         500 }, // Depleted Sticks
-    Resource { tier:  0, id:         501 }, // Depleted Flint
+//  Resource { tier:  0, id:         500 }, // Depleted Sticks
+//  Resource { tier:  0, id:         501 }, // Depleted Flint
     Resource { tier:  0, id:  2145270439 }, // Jakyl Den
 ];
