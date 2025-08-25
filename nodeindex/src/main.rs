@@ -11,11 +11,13 @@ use glue::{Config, Configurable, with_channel};
 
 use spacetimedb_sdk::{DbContext, Table};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
+use axum::http::{HeaderValue, Method};
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, RwLock};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::{Any, CorsLayer};
 
 type NodeMap = RwLock<HashMap<u64, [i32; 2]>>;
 
@@ -67,7 +69,7 @@ async fn main() {
 
     let mut producer = Box::pin(con.run_async());
     let consumer = tokio::spawn(consume(rx, map.clone()));
-    let server = tokio::spawn(server(rx_sig, map.clone()));
+    let server = tokio::spawn(server(rx_sig, config, map.clone()));
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -139,13 +141,22 @@ async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, NodeM
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, map: Arc<HashMap<i32, NodeMap>>) {
-    let app = Router::new()
+async fn server(rx: oneshot::Receiver<()>, config: Config, map: Arc<HashMap<i32, NodeMap>>) {
+    let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
         .with_state(map);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    if !config.cors_origin().is_empty() {
+        let cors = CorsLayer::new()
+            .allow_origin([HeaderValue::from_str(config.cors_origin()).unwrap()])
+            .allow_methods([Method::GET, Method::OPTIONS])
+            .allow_headers(Any);
+
+        app = app.layer(cors);
+    }
+
+    let addr: SocketAddr = config.socket_addr().parse().unwrap();
     let listener = TcpListener::bind(addr).await.unwrap();
 
     println!("server listening on {}", addr);

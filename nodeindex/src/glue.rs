@@ -6,6 +6,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
+    socket_addr: String,
+    cors_origin: String,
     cluster_url: String,
     region:      String,
     token:       String,
@@ -13,17 +15,27 @@ pub struct Config {
 
 impl Config {
     fn new() -> Self {
-        Self { cluster_url: String::new(), region: String::new(), token: String::new() }
+        Self {
+            socket_addr: String::new(),
+            cors_origin: String::new(),
+            cluster_url: String::new(),
+            region: String::new(),
+            token: String::new(),
+        }
     }
 
     pub fn from_env() -> Result<Self> {
+        let socket_addr = std::env::var("SOCKET_ADDR")
+            .unwrap_or(String::from("0.0.0.0:3000"));
+        let cors_origin = std::env::var("CORS_ORIGIN")
+            .unwrap_or(String::new());
         let cluster_url = std::env::var("CLUSTER_URL")
             .unwrap_or(String::from("https://bitcraft-early-access.spacetimedb.com"));
 
         let region = std::env::var("REGION")?;
         let token = std::env::var("TOKEN")?;
 
-        Ok(Self { cluster_url, region, token })
+        Ok(Self { socket_addr, cors_origin, cluster_url, region, token })
     }
 
     pub fn from(path: &str) -> Result<Self> {
@@ -43,6 +55,9 @@ impl Config {
     pub fn is_empty(&self) -> bool {
         self.cluster_url.is_empty() || self.region.is_empty() || self.token.is_empty()
     }
+    
+    pub fn socket_addr(&self) -> &str { &self.socket_addr }
+    pub fn cors_origin(&self) -> &str { &self.cors_origin }
 }
 
 pub trait Configurable<MOD>
