@@ -17,7 +17,7 @@ use tokio::sync::{oneshot, RwLock};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tower_http::compression::CompressionLayer;
 
-type NodeMap = HashMap<u64, (i32, i32)>;
+type NodeMap = RwLock<HashMap<u64, [i32; 2]>>;
 
 enum Message {
     Disconnect,
@@ -106,7 +106,7 @@ fn on_delete(_: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message
     tx.send(Message::delete(row)).unwrap()
 }
 
-fn init_shared_map() -> Arc<HashMap<i32, RwLock<NodeMap>>> {
+fn init_shared_map() -> Arc<HashMap<i32, NodeMap>> {
     let mut map = HashMap::new();
     for res in RESOURCES {
         map.insert(res.id, RwLock::new(HashMap::new()));
@@ -115,7 +115,7 @@ fn init_shared_map() -> Arc<HashMap<i32, RwLock<NodeMap>>> {
     Arc::new(map)
 }
 
-async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, RwLock<NodeMap>>>) {
+async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, NodeMap>>) {
     while let Some(msg) = rx.recv().await {
         if let Message::Disconnect = &msg { break }
 
@@ -124,7 +124,7 @@ async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, RwLoc
                 .expect("received insert for untracked resource")
                 .write()
                 .await
-                .insert(id, (x, z));
+                .insert(id, [x, z]);
         }
 
         if let Message::Delete { id, res } = msg {
@@ -137,7 +137,7 @@ async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, RwLoc
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, map: Arc<HashMap<i32, RwLock<NodeMap>>>) {
+async fn server(rx: oneshot::Receiver<()>, map: Arc<HashMap<i32, NodeMap>>) {
     let app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
@@ -156,23 +156,19 @@ async fn server(rx: oneshot::Receiver<()>, map: Arc<HashMap<i32, RwLock<NodeMap>
 
 async fn route_resource_id(
     Path(id): Path<i32>,
-    state: State<Arc<HashMap<i32, RwLock<NodeMap>>>>,
+    state: State<Arc<HashMap<i32, NodeMap>>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let nodes =
         if let Some(nodes) = state.get(&id) { nodes }
         else { return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id))) };
-
-    let nodes: Vec<Vec<i32>> = nodes.read().await
-        .values()
-        .map(|(x, z)| vec![*x, *z])
-        .collect();
+    let nodes = nodes.read().await;
 
     Ok(Json(serde_json::json!({
         "type": "FeatureCollection",
         "features": [{
             "type": "Feature",
             "properties": { "makeCanvas": "10" },
-            "geometry": { "type": "MultiPoint", "coordinates": nodes }
+            "geometry": { "type": "MultiPoint", "coordinates": nodes.values().collect::<Vec<_>>() }
         }]
     })))
 }
