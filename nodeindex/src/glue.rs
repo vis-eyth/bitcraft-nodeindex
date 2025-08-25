@@ -16,6 +16,16 @@ impl Config {
         Self { cluster_url: String::new(), region: String::new(), token: String::new() }
     }
 
+    pub fn from_env() -> Result<Self> {
+        let cluster_url = std::env::var("CLUSTER_URL")
+            .unwrap_or(String::from("https://bitcraft-early-access.spacetimedb.com"));
+
+        let region = std::env::var("REGION")?;
+        let token = std::env::var("TOKEN")?;
+
+        Ok(Self { cluster_url, region, token })
+    }
+
     pub fn from(path: &str) -> Result<Self> {
         let path = Path::new(path);
         if !path.exists() {

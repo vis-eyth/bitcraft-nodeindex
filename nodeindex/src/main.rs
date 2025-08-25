@@ -37,10 +37,12 @@ impl Message {
 
 #[tokio::main]
 async fn main() {
-    let config = Config::from("config.json").expect("failed to load config.json");
+    let config = Config::from_env()
+        .or(Config::from("config.json"))
+        .expect("failed to load config!");
 
     if config.is_empty() {
-        eprintln!("please fill out the configuration file (config.json)!");
+        eprintln!("please fill out the configuration file (config.json) or use env vars!");
         return;
     }
 
