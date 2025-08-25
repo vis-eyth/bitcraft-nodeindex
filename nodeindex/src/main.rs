@@ -1,13 +1,15 @@
 use std::collections::HashMap;
+use std::io::{stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use bindings::region::*;
 
-mod resource;
-use resource::{RESOURCES, ResourceSubscription};
-
 mod glue;
 use glue::{Config, Configurable, with_channel};
+mod queue_sub;
+use queue_sub::{QueueSub, WithQueueSub};
+mod resource;
+use resource::RESOURCES;
 
 use spacetimedb_sdk::{DbContext, Table};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
@@ -48,15 +50,30 @@ async fn main() {
         return;
     }
 
+    let mut sub = QueueSub::new()
+        .on_error(|_, err| eprintln!("\nsubscription error: {:?}", err))
+        .on_success(|| println!("\nactive!"))
+        .on_group(|group| { print!("\n{}", group); stdout().flush().unwrap(); })
+        .on_tick(|| { print!("."); stdout().flush().unwrap(); });
+
+    sub.push_group(String::from("resources:"));
+    let mut tier = u8::MAX;
+    for res in RESOURCES {
+        if tier != res.tier {
+            sub.push_group(format!("  tier {:>2} ", res.tier));
+            tier = res.tier;
+        }
+
+        sub.push_query(move || vec![
+            format!("SELECT res.* FROM resource_state res JOIN location_state loc ON res.entity_id = loc.entity_id WHERE res.resource_id = {};", res.id),
+            format!("SELECT loc.* FROM location_state loc JOIN resource_state res ON loc.entity_id = res.entity_id WHERE res.resource_id = {};", res.id),
+        ]);
+    }
+
     let (tx, rx) = unbounded_channel();
     let con = DbConnection::builder()
         .configure(&config)
-        .on_connect(|ctx, _, _| {
-            eprintln!("connected!");
-            ctx.subscription_builder().all_resources(
-                |_, err| eprintln!("subscription error: {:?}", err),
-                |_| println!("active!"));
-        })
+        .on_connect(|ctx, _, _| { eprintln!("connected!"); ctx.subscribe(sub); })
         .on_disconnect(|_, _| eprintln!("disconnected!"))
         .build()
         .unwrap();
