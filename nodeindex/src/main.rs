@@ -4,14 +4,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use bindings::region::*;
 
+mod enums;
+use enums::Enum;
 mod glue;
-use glue::{Config, Configurable, with_channel};
+use glue::{Config, Configurable, channel_1, channel_2};
 mod queue_sub;
 use queue_sub::{QueueSub, WithQueueSub};
 mod resource;
 use resource::RESOURCES;
 
-use spacetimedb_sdk::{DbContext, Table};
+use spacetimedb_sdk::{DbContext, Table, TableWithPrimaryKey};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
 use serde_json::Value;
@@ -22,20 +24,33 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 type NodeMap = RwLock<HashMap<u64, [i32; 2]>>;
+struct AppState { pub resource: HashMap<i32, NodeMap>, pub enemy: HashMap<i32, NodeMap> }
 
 enum Message {
     Disconnect,
-    Insert { id: u64, res: i32, x: i32, z: i32 },
-    Delete { id: u64, res: i32 },
+
+    ResourceInsert { id: u64, res: i32, x: i32, z: i32 },
+    ResourceDelete { id: u64, res: i32 },
+
+    EnemyInsert { id: u64, mob: i32, x: i32, z: i32 },
+    EnemyDelete { id: u64, mob: i32 },
 }
 
 impl Message {
-    pub fn insert(res: &ResourceState, loc: &LocationState) -> Self {
-        Self::Insert { id: res.entity_id, res: res.resource_id, x: loc.x, z: loc.z }
+    pub fn resource_insert(res: &ResourceState, loc: &LocationState) -> Self {
+        Self::ResourceInsert { id: res.entity_id, res: res.resource_id, x: loc.x, z: loc.z }
     }
 
-    pub fn delete(res: &ResourceState) -> Self {
-        Self::Delete { id: res.entity_id, res: res.resource_id }
+    pub fn resource_delete(res: &ResourceState) -> Self {
+        Self::ResourceDelete { id: res.entity_id, res: res.resource_id }
+    }
+
+    pub fn enemy_insert(mob: &EnemyState, loc: &MobileEntityState) -> Self {
+        Self::EnemyInsert { id: mob.entity_id, mob: mob.enemy_type as i32, x: loc.location_x, z: loc.location_z }
+    }
+
+    pub fn enemy_delete(mob: &EnemyState) -> Self {
+        Self::EnemyDelete { id: mob.entity_id, mob: mob.enemy_type as i32 }
     }
 }
 
@@ -70,6 +85,12 @@ async fn main() {
         ]);
     }
 
+    sub.push_group(String::from("enemies: "));
+    sub.push_query(move || vec![
+        String::from("SELECT mob.* FROM enemy_state mob JOIN mobile_entity_state loc ON mob.entity_id = loc.entity_id;"),
+        String::from("SELECT loc.* FROM mobile_entity_state loc JOIN enemy_state mob ON loc.entity_id = mob.entity_id;"),
+    ]);
+
     let (tx, rx) = unbounded_channel();
     let con = DbConnection::builder()
         .configure(&config)
@@ -78,10 +99,15 @@ async fn main() {
         .build()
         .unwrap();
 
-    con.db.resource_state().on_insert(with_channel(tx.clone(), on_insert));
-    con.db.resource_state().on_delete(with_channel(tx.clone(), on_delete));
+    con.db.resource_state().on_insert(channel_1(tx.clone(), on_resource_insert));
+    con.db.resource_state().on_delete(channel_1(tx.clone(), on_resource_delete));
 
-    let map = init_shared_map();
+    con.db.enemy_state().on_insert(channel_1(tx.clone(), on_enemy_insert));
+    con.db.enemy_state().on_delete(channel_1(tx.clone(), on_enemy_delete));
+
+    con.db.mobile_entity_state().on_update(channel_2(tx.clone(), on_enemy_move));
+
+    let map = init_state();
     let (tx_sig, rx_sig) = oneshot::channel();
 
     let mut producer = Box::pin(con.run_async());
@@ -111,58 +137,104 @@ async fn main() {
     }
 }
 
-fn on_insert(ctx: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
-    let loc = ctx.db.location_state()
-        .entity_id()
-        .find(&row.entity_id);
-
-    if let Some(loc) = loc {
-        tx.send(Message::insert(row, &loc)).unwrap()
-    } else {
+fn on_resource_insert(ctx: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
+    let Some(loc) = ctx.db.location_state().entity_id().find(&row.entity_id) else {
         eprintln!("no location found for resource: {}", row.entity_id);
-    }
+        return;
+    };
+
+    tx.send(Message::resource_insert(row, &loc)).unwrap()
 }
 
-fn on_delete(_: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
-    tx.send(Message::delete(row)).unwrap()
+fn on_resource_delete(_: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
+    tx.send(Message::resource_delete(row)).unwrap()
 }
 
-fn init_shared_map() -> Arc<HashMap<i32, NodeMap>> {
-    let mut map = HashMap::new();
+fn on_enemy_insert(ctx: &EventContext, row: &EnemyState, tx: &UnboundedSender<Message>) {
+    let Some(loc) = ctx.db.mobile_entity_state().entity_id().find(&row.entity_id) else {
+        eprintln!("no location found for enemy: {}", row.entity_id);
+        return;
+    };
+
+    tx.send(Message::enemy_insert(row, &loc)).unwrap()
+}
+
+fn on_enemy_delete(_: &EventContext, row: &EnemyState, tx: &UnboundedSender<Message>) {
+    tx.send(Message::enemy_delete(row)).unwrap()
+}
+
+fn on_enemy_move(ctx: &EventContext, _: &MobileEntityState, new: &MobileEntityState, tx: &UnboundedSender<Message>) {
+    let Some(mob) = ctx.db.enemy_state().entity_id().find(&new.entity_id) else {
+        eprintln!("no enemy found for location: {}", new.entity_id);
+        return;
+    };
+
+    tx.send(Message::enemy_insert(&mob, new)).unwrap()
+}
+
+fn init_state() -> Arc<AppState> {
+    let mut state = AppState { resource: HashMap::new(), enemy: HashMap::new() };
+
     for res in RESOURCES {
-        map.insert(res.id, RwLock::new(HashMap::new()));
+        state.resource.insert(res.id, RwLock::new(HashMap::new()));
+    }
+    for mob in EnemyType::values() {
+        state.enemy.insert(*mob as i32, RwLock::new(HashMap::new()));
     }
 
-    Arc::new(map)
+    Arc::new(state)
 }
 
-async fn consume(mut rx: UnboundedReceiver<Message>, map: Arc<HashMap<i32, NodeMap>>) {
+async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
     while let Some(msg) = rx.recv().await {
-        if let Message::Disconnect = &msg { break }
+        match msg {
+            Message::Disconnect => { break; }
 
-        if let Message::Insert{ id, res, x, z } = msg {
-            map.get(&res)
-                .expect("received insert for untracked resource")
-                .write()
-                .await
-                .insert(id, [x, z]);
-        }
+            Message::ResourceInsert { id, res, x, z } => {
+                state.resource
+                    .get(&res)
+                    .expect("received insert for untracked resource")
+                    .write()
+                    .await
+                    .insert(id, [x, z]);
+            }
 
-        if let Message::Delete { id, res } = msg {
-            map.get(&res)
-                .expect("received delete for untracked resource")
-                .write()
-                .await
-                .remove(&id);
+            Message::ResourceDelete { id, res } => {
+                state.resource
+                    .get(&res)
+                    .expect("received delete for untracked resource")
+                    .write()
+                    .await
+                    .remove(&id);
+            }
+
+            Message::EnemyInsert { id, mob, x, z } => {
+                state.enemy
+                    .get(&mob)
+                    .expect("received insert for untracked enemy")
+                    .write()
+                    .await
+                    .insert(id, [x, z]);
+            }
+
+            Message::EnemyDelete { id, mob } => {
+                state.enemy
+                    .get(&mob)
+                    .expect("received delete for untracked enemy")
+                    .write()
+                    .await
+                    .remove(&id);
+            }
         }
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, config: Config, map: Arc<HashMap<i32, NodeMap>>) {
+async fn server(rx: oneshot::Receiver<()>, config: Config, state: Arc<AppState>) {
     let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
+        .route("/enemy/{id}", get(route_enemy_id))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
-        .with_state(map);
+        .with_state(state);
 
     if !config.cors_origin().is_empty() {
         let cors = CorsLayer::new()
@@ -186,9 +258,9 @@ async fn server(rx: oneshot::Receiver<()>, config: Config, map: Arc<HashMap<i32,
 
 async fn route_resource_id(
     Path(id): Path<i32>,
-    state: State<Arc<HashMap<i32, NodeMap>>>,
+    state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(nodes) = state.get(&id) else {
+    let Some(nodes) = state.resource.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
     let nodes = nodes.read().await;
@@ -199,6 +271,28 @@ async fn route_resource_id(
             "type": "Feature",
             "properties": { "makeCanvas": "10" },
             "geometry": { "type": "MultiPoint", "coordinates": nodes.values().collect::<Vec<_>>() }
+        }]
+    })))
+}
+
+async fn route_enemy_id(
+    Path(id): Path<i32>,
+    state: State<Arc<AppState>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let Some(nodes) = state.enemy.get(&id) else {
+        return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
+    };
+    let nodes = nodes.read().await
+        .values()
+        .map(|row| row.map(|e| e as f64 / 1_000f64))
+        .collect::<Vec<_>>();
+
+    Ok(Json(serde_json::json!({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": { "makeCanvas": "10" },
+            "geometry": { "type": "MultiPoint", "coordinates": nodes }
         }]
     })))
 }

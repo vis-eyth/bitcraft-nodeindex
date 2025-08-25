@@ -78,6 +78,10 @@ where MOD: SpacetimeModule
 
 
 
-pub fn with_channel<E, R, M>(tx: UnboundedSender<M>, callback: fn(&E, &R, &UnboundedSender<M>)) -> impl FnMut(&E, &R)  {
-    move |e, r| callback(e, r, &tx)
+pub fn channel_1<C, R, M>(tx: UnboundedSender<M>, callback: fn(&C, &R, &UnboundedSender<M>)) -> impl FnMut(&C, &R)  {
+    move |ctx, row| callback(ctx, row, &tx)
+}
+
+pub fn channel_2<C, R, M>(tx: UnboundedSender<M>, callback: fn(&C, &R, &R, &UnboundedSender<M>)) -> impl FnMut(&C, &R, &R)  {
+    move |ctx, old, new| callback(ctx, old, new, &tx)
 }
