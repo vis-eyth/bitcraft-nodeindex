@@ -1,3 +1,0 @@
-[submodule "bindings"]
-	path = bindings
-	url = https://github.com/vis-eyth/bitcraft-bindings.git
