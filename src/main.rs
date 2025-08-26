@@ -7,11 +7,10 @@ mod enums;
 use enums::Enum;
 mod glue;
 use glue::{Config, Configurable};
-mod queue_sub;
-use queue_sub::{QueueSub, WithQueueSub};
+mod subscription;
 mod resource;
 use resource::RESOURCES;
-use crate::{channels::*};
+use crate::{channels::*, subscription::*};
 
 use bindings::{sdk::DbContext, region::*};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
@@ -66,11 +65,18 @@ async fn main() {
         return;
     }
 
-    let mut sub = QueueSub::new()
-        .on_error(|_, err| eprintln!("\nsubscription error: {:?}", err))
-        .on_success(|| println!("\nactive!"))
-        .on_group(|group| { print!("\n{}", group); stdout().flush().unwrap(); })
-        .on_tick(|| { print!("."); stdout().flush().unwrap(); });
+    let mut sub = QueueSub::new().on_success(|| {
+        println!("\nactive!");
+    }).on_error(|ctx, err| {
+        println!("\nsubscription error: {:?}", err);
+        ctx.disconnect().unwrap();
+    }).on_group(|group| {
+        print!("\n{}", group);
+        stdout().flush().unwrap();
+    }).on_tick(|| {
+        print!(".");
+        stdout().flush().unwrap();
+    });
 
     sub.push_group(String::from("resources:"));
     let mut tier = u8::MAX;

@@ -9,7 +9,7 @@ enum QueueEvent {
 pub struct QueueSub {
     queue: VecDeque<QueueEvent>,
 
-    on_success: Option<fn()>,
+    on_success: Option<Box<dyn FnOnce() + Send>>,
     on_error:   Option<fn(&ErrorContext, Error)>,
     on_group:   Option<fn(&str)>,
     on_tick:    Option<fn()>,
@@ -27,8 +27,8 @@ impl QueueSub {
         }
     }
 
-    pub fn on_success(mut self, on_success: fn()) -> Self {
-        self.on_success = Some(on_success); self
+    pub fn on_success(mut self, on_success: impl FnOnce() -> () + Send + 'static) -> Self {
+        self.on_success = Some(Box::new(on_success)); self
     }
     pub fn on_error(mut self, on_error: fn(&ErrorContext, Error)) -> Self {
         self.on_error = Some(on_error); self
