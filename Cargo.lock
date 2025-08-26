@@ -889,6 +889,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "intmap"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16dd999647b7a027fadf2b3041a4ea9c8ae21562823fe5cbdecd46537d535ae2"
+
+[[package]]
 name = "io-uring"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1039,6 +1045,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bindings",
+ "intmap",
  "serde",
  "serde_json",
  "tokio",

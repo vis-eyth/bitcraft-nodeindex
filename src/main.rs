@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::{stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -15,6 +14,7 @@ use resource::RESOURCES;
 use bindings::{sdk::{DbContext, Table, TableWithPrimaryKey}, region::*};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
+use intmap::IntMap;
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, RwLock};
@@ -22,8 +22,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 
-type NodeMap = RwLock<HashMap<u64, [i32; 2]>>;
-struct AppState { pub resource: HashMap<i32, NodeMap>, pub enemy: HashMap<i32, NodeMap> }
+type NodeMap = RwLock<IntMap<u64, [i32; 2]>>;
+struct AppState { pub resource: IntMap<i32, NodeMap>, pub enemy: IntMap<i32, NodeMap> }
 
 enum Message {
     Disconnect,
@@ -172,13 +172,13 @@ fn on_enemy_move(ctx: &EventContext, _: &MobileEntityState, new: &MobileEntitySt
 }
 
 fn init_state() -> Arc<AppState> {
-    let mut state = AppState { resource: HashMap::new(), enemy: HashMap::new() };
+    let mut state = AppState { resource: IntMap::new(), enemy: IntMap::new() };
 
     for res in RESOURCES {
-        state.resource.insert(res.id, RwLock::new(HashMap::new()));
+        state.resource.insert(res.id, RwLock::new(IntMap::new()));
     }
     for mob in EnemyType::values() {
-        state.enemy.insert(*mob as i32, RwLock::new(HashMap::new()));
+        state.enemy.insert(*mob as i32, RwLock::new(IntMap::new()));
     }
 
     Arc::new(state)
@@ -191,7 +191,7 @@ async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
 
             Message::ResourceInsert { id, res, x, z } => {
                 state.resource
-                    .get(&res)
+                    .get(res)
                     .expect("received insert for untracked resource")
                     .write()
                     .await
@@ -200,16 +200,16 @@ async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
 
             Message::ResourceDelete { id, res } => {
                 state.resource
-                    .get(&res)
+                    .get(res)
                     .expect("received delete for untracked resource")
                     .write()
                     .await
-                    .remove(&id);
+                    .remove(id);
             }
 
             Message::EnemyInsert { id, mob, x, z } => {
                 state.enemy
-                    .get(&mob)
+                    .get(mob)
                     .expect("received insert for untracked enemy")
                     .write()
                     .await
@@ -218,11 +218,11 @@ async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
 
             Message::EnemyDelete { id, mob } => {
                 state.enemy
-                    .get(&mob)
+                    .get(mob)
                     .expect("received delete for untracked enemy")
                     .write()
                     .await
-                    .remove(&id);
+                    .remove(id);
             }
         }
     }
@@ -259,7 +259,7 @@ async fn route_resource_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(nodes) = state.resource.get(&id) else {
+    let Some(nodes) = state.resource.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
     let nodes = nodes.read().await;
@@ -278,7 +278,7 @@ async fn route_enemy_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(nodes) = state.enemy.get(&id) else {
+    let Some(nodes) = state.enemy.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
     let nodes = nodes.read().await

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bindings = { git = "https://github.com/vis-eyth/bitcraft-bindings", rev = "7a3e618b65623158e632a6b4131dab7a58492deb" }
 anyhow = { version = "1.0.98" }
+intmap = { version = "3.1.2" }
 serde = { version = "1.0.219" }
 serde_json = { version = "1.0.142" }
 tokio = { version = "1.47.1", features = ["rt", "signal", "macros"] }
