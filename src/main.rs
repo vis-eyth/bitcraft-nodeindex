@@ -2,23 +2,25 @@ use std::io::{stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+mod channels;
 mod enums;
 use enums::Enum;
 mod glue;
-use glue::{Config, Configurable, channel_1, channel_2};
+use glue::{Config, Configurable};
 mod queue_sub;
 use queue_sub::{QueueSub, WithQueueSub};
 mod resource;
 use resource::RESOURCES;
+use crate::{channels::*};
 
-use bindings::{sdk::{DbContext, Table, TableWithPrimaryKey}, region::*};
+use bindings::{sdk::DbContext, region::*};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
 use intmap::IntMap;
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, RwLock};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -98,13 +100,32 @@ async fn main() {
         .build()
         .unwrap();
 
-    con.db.resource_state().on_insert(channel_1(tx.clone(), on_resource_insert));
-    con.db.resource_state().on_delete(channel_1(tx.clone(), on_resource_delete));
+    con.db.resource_state().on_insert_send(&tx, |ctx, row|
+        ctx.db.location_state()
+            .entity_id()
+            .find(&row.entity_id)
+            .map(|loc| Message::resource_insert(row, &loc))
+    );
+    con.db.resource_state().on_delete_send(&tx, |_, row|
+        Some(Message::resource_delete(row))
+    );
 
-    con.db.enemy_state().on_insert(channel_1(tx.clone(), on_enemy_insert));
-    con.db.enemy_state().on_delete(channel_1(tx.clone(), on_enemy_delete));
+    con.db.enemy_state().on_insert_send(&tx, |ctx, row|
+        ctx.db.mobile_entity_state()
+            .entity_id()
+            .find(&row.entity_id)
+            .map(|loc| Message::enemy_insert(row, &loc))
+    );
+    con.db.enemy_state().on_delete_send(&tx, |_, row|
+        Some(Message::enemy_delete(row))
+    );
 
-    con.db.mobile_entity_state().on_update(channel_2(tx.clone(), on_enemy_move));
+    con.db.mobile_entity_state().on_update_send(&tx, |ctx, _, new|
+        ctx.db.enemy_state()
+            .entity_id()
+            .find(&new.entity_id)
+            .map(|mob| Message::enemy_insert(&mob, new))
+    );
 
     let map = init_state();
     let (tx_sig, rx_sig) = oneshot::channel();
@@ -134,41 +155,6 @@ async fn main() {
             server.await.unwrap();
         },
     }
-}
-
-fn on_resource_insert(ctx: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
-    let Some(loc) = ctx.db.location_state().entity_id().find(&row.entity_id) else {
-        eprintln!("no location found for resource: {}", row.entity_id);
-        return;
-    };
-
-    tx.send(Message::resource_insert(row, &loc)).unwrap()
-}
-
-fn on_resource_delete(_: &EventContext, row: &ResourceState, tx: &UnboundedSender<Message>) {
-    tx.send(Message::resource_delete(row)).unwrap()
-}
-
-fn on_enemy_insert(ctx: &EventContext, row: &EnemyState, tx: &UnboundedSender<Message>) {
-    let Some(loc) = ctx.db.mobile_entity_state().entity_id().find(&row.entity_id) else {
-        eprintln!("no location found for enemy: {}", row.entity_id);
-        return;
-    };
-
-    tx.send(Message::enemy_insert(row, &loc)).unwrap()
-}
-
-fn on_enemy_delete(_: &EventContext, row: &EnemyState, tx: &UnboundedSender<Message>) {
-    tx.send(Message::enemy_delete(row)).unwrap()
-}
-
-fn on_enemy_move(ctx: &EventContext, _: &MobileEntityState, new: &MobileEntityState, tx: &UnboundedSender<Message>) {
-    let Some(mob) = ctx.db.enemy_state().entity_id().find(&new.entity_id) else {
-        eprintln!("no enemy found for location: {}", new.entity_id);
-        return;
-    };
-
-    tx.send(Message::enemy_insert(&mob, new)).unwrap()
 }
 
 fn init_state() -> Arc<AppState> {

@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::path::Path;
 use serde;
 use bindings::sdk::{DbConnectionBuilder, __codegen::SpacetimeModule};
-use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
@@ -74,14 +73,4 @@ where MOD: SpacetimeModule
             .with_module_name(&config.region)
             .with_token(Some(&config.token))
     }
-}
-
-
-
-pub fn channel_1<C, R, M>(tx: UnboundedSender<M>, callback: fn(&C, &R, &UnboundedSender<M>)) -> impl FnMut(&C, &R)  {
-    move |ctx, row| callback(ctx, row, &tx)
-}
-
-pub fn channel_2<C, R, M>(tx: UnboundedSender<M>, callback: fn(&C, &R, &R, &UnboundedSender<M>)) -> impl FnMut(&C, &R, &R)  {
-    move |ctx, old, new| callback(ctx, old, new, &tx)
 }
