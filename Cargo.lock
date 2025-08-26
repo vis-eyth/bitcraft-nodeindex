@@ -204,8 +204,8 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindings"
-version = "2025.8.20"
-source = "git+https://github.com/vis-eyth/bitcraft-bindings?rev=e369d0214003205946b8c7a6093170933976c529#e369d0214003205946b8c7a6093170933976c529"
+version = "2025.8.26"
+source = "git+https://github.com/vis-eyth/bitcraft-bindings?rev=7a3e618b65623158e632a6b4131dab7a58492deb#7a3e618b65623158e632a6b4131dab7a58492deb"
 dependencies = [
  "spacetimedb-sdk",
 ]
@@ -1041,7 +1041,6 @@ dependencies = [
  "bindings",
  "serde",
  "serde_json",
- "spacetimedb-sdk",
  "tokio",
  "tower-http",
 ]

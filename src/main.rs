@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::io::{stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use bindings::region::*;
 
 mod enums;
 use enums::Enum;
@@ -13,7 +12,7 @@ use queue_sub::{QueueSub, WithQueueSub};
 mod resource;
 use resource::RESOURCES;
 
-use spacetimedb_sdk::{DbContext, Table, TableWithPrimaryKey};
+use bindings::{sdk::{DbContext, Table, TableWithPrimaryKey}, region::*};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
 use serde_json::Value;

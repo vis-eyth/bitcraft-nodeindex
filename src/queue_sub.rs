@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
-use spacetimedb_sdk::{DbContext, Error};
-use bindings::region::{DbConnection, ErrorContext, SubscriptionEventContext};
+use bindings::{sdk::{DbContext, Error}, region::*};
 
 enum QueueEvent {
     GROUP(String),

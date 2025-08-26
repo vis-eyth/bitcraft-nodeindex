@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 use serde;
-use spacetimedb_sdk::{DbConnectionBuilder, __codegen::SpacetimeModule};
+use bindings::sdk::{DbConnectionBuilder, __codegen::SpacetimeModule};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
