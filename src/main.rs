@@ -75,6 +75,7 @@ async fn main() {
         .configure(&db_config)
         .on_connect(|ctx, _, _| { eprintln!("connected!"); ctx.subscribe(sub); })
         .on_disconnect(|_, _| eprintln!("disconnected!"))
+        .with_light_mode(true)
         .build()
         .unwrap();
 
