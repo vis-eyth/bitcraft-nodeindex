@@ -205,9 +205,10 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "bindings"
 version = "2025.8.26"
-source = "git+https://github.com/vis-eyth/bitcraft-bindings?rev=7a3e618b65623158e632a6b4131dab7a58492deb#7a3e618b65623158e632a6b4131dab7a58492deb"
+source = "git+https://github.com/vis-eyth/bitcraft-bindings?rev=f638e4006df92745fa408c1919a5d1394a7ce169#f638e4006df92745fa408c1919a5d1394a7ce169"
 dependencies = [
  "spacetimedb-sdk",
+ "tokio",
 ]
 
 [[package]]
