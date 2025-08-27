@@ -1,30 +1,18 @@
-use std::io::{stdout, Write};
-use std::net::SocketAddr;
-use std::sync::Arc;
-
 mod channels;
-mod enums;
-use enums::Enum;
-mod glue;
-use glue::{Config, Configurable};
+mod config;
 mod subscription;
-mod resource;
-use resource::RESOURCES;
-use crate::{channels::*, subscription::*};
+use crate::{channels::*, config::*, subscription::*};
 
+use std::io::{stdout, Write};
+use std::sync::Arc;
 use bindings::{sdk::DbContext, region::*};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
-use intmap::IntMap;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, RwLock};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::{oneshot, mpsc::{unbounded_channel, UnboundedReceiver}};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
-
-type NodeMap = RwLock<IntMap<u64, [i32; 2]>>;
-struct AppState { pub resource: IntMap<i32, NodeMap>, pub enemy: IntMap<i32, NodeMap> }
 
 enum Message {
     Disconnect,
@@ -56,16 +44,17 @@ impl Message {
 
 #[tokio::main]
 async fn main() {
-    let config = Config::from_env()
-        .or(Config::from("config.json"))
-        .expect("failed to load config!");
+    let config = match AppConfig::from("config.json") {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("could not set configuration:");
+            eprintln!("  {}", err);
+            eprintln!("please check the configuration file (config.json) and your env vars!");
+            return;
+        }
+    };
 
-    if config.is_empty() {
-        eprintln!("please fill out the configuration file (config.json) or use env vars!");
-        return;
-    }
-
-    let mut sub = QueueSub::new().on_success(|| {
+    let sub = QueueSub::new().on_success(|| {
         println!("\nactive!");
     }).on_error(|ctx, err| {
         println!("\nsubscription error: {:?}", err);
@@ -78,29 +67,12 @@ async fn main() {
         stdout().flush().unwrap();
     });
 
-    sub.push_group(String::from("resources:"));
-    let mut tier = u8::MAX;
-    for res in RESOURCES {
-        if tier != res.tier {
-            sub.push_group(format!("  tier {:>2} ", res.tier));
-            tier = res.tier;
-        }
+    let (state, db_config, sub, server_config) = config.build(sub);
 
-        sub.push_query(move || vec![
-            format!("SELECT res.* FROM resource_state res JOIN location_state loc ON res.entity_id = loc.entity_id WHERE res.resource_id = {};", res.id),
-            format!("SELECT loc.* FROM location_state loc JOIN resource_state res ON loc.entity_id = res.entity_id WHERE res.resource_id = {};", res.id),
-        ]);
-    }
-
-    sub.push_group(String::from("enemies: "));
-    sub.push_query(move || vec![
-        String::from("SELECT mob.* FROM enemy_state mob JOIN mobile_entity_state loc ON mob.entity_id = loc.entity_id;"),
-        String::from("SELECT loc.* FROM mobile_entity_state loc JOIN enemy_state mob ON loc.entity_id = mob.entity_id;"),
-    ]);
 
     let (tx, rx) = unbounded_channel();
     let con = DbConnection::builder()
-        .configure(&config)
+        .configure(&db_config)
         .on_connect(|ctx, _, _| { eprintln!("connected!"); ctx.subscribe(sub); })
         .on_disconnect(|_, _| eprintln!("disconnected!"))
         .build()
@@ -133,12 +105,11 @@ async fn main() {
             .map(|mob| Message::enemy_insert(&mob, new))
     );
 
-    let map = init_state();
     let (tx_sig, rx_sig) = oneshot::channel();
 
     let mut producer = Box::pin(con.run_async());
-    let consumer = tokio::spawn(consume(rx, map.clone()));
-    let server = tokio::spawn(server(rx_sig, config, map.clone()));
+    let consumer = tokio::spawn(consume(rx, state.clone()));
+    let server = tokio::spawn(server(rx_sig, server_config, state.clone()));
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -163,80 +134,52 @@ async fn main() {
     }
 }
 
-fn init_state() -> Arc<AppState> {
-    let mut state = AppState { resource: IntMap::new(), enemy: IntMap::new() };
-
-    for res in RESOURCES {
-        state.resource.insert(res.id, RwLock::new(IntMap::new()));
-    }
-    for mob in EnemyType::values() {
-        state.enemy.insert(*mob as i32, RwLock::new(IntMap::new()));
-    }
-
-    Arc::new(state)
-}
-
 async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             Message::Disconnect => { break; }
 
             Message::ResourceInsert { id, res, x, z } => {
-                state.resource
-                    .get(res)
-                    .expect("received insert for untracked resource")
-                    .write()
-                    .await
-                    .insert(id, [x, z]);
+                if let Some(resource) = state.resource.get(res) {
+                    resource.nodes.write().await.insert(id, [x, z]);
+                }
             }
-
             Message::ResourceDelete { id, res } => {
-                state.resource
-                    .get(res)
-                    .expect("received delete for untracked resource")
-                    .write()
-                    .await
-                    .remove(id);
+                if let Some(resource) = state.resource.get(res) {
+                    resource.nodes.write().await.remove(id);
+                }
             }
-
             Message::EnemyInsert { id, mob, x, z } => {
-                state.enemy
-                    .get(mob)
-                    .expect("received insert for untracked enemy")
-                    .write()
-                    .await
-                    .insert(id, [x, z]);
+                if let Some(enemy) = state.enemy.get(mob) {
+                    enemy.nodes.write().await.insert(id, [x, z]);
+                }
             }
-
             Message::EnemyDelete { id, mob } => {
-                state.enemy
-                    .get(mob)
-                    .expect("received delete for untracked enemy")
-                    .write()
-                    .await
-                    .remove(id);
+                if let Some(enemy) = state.enemy.get(mob) {
+                    enemy.nodes.write().await.remove(id);
+                }
             }
         }
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, config: Config, state: Arc<AppState>) {
+async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) {
     let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .route("/enemy/{id}", get(route_enemy_id))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
         .with_state(state);
 
-    if !config.cors_origin().is_empty() {
+    if !config.cors_origin.is_empty() {
         let cors = CorsLayer::new()
-            .allow_origin([HeaderValue::from_str(config.cors_origin()).unwrap()])
+            .allow_origin([HeaderValue::from_str(&config.cors_origin).unwrap()])
             .allow_methods([Method::GET, Method::OPTIONS])
             .allow_headers(Any);
 
         app = app.layer(cors);
     }
 
-    let addr: SocketAddr = config.socket_addr().parse().unwrap();
+    let addr = config.socket_addr;
     let listener = TcpListener::bind(addr).await.unwrap();
 
     println!("server listening on {}", addr);
@@ -251,16 +194,16 @@ async fn route_resource_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(nodes) = state.resource.get(id) else {
+    let Some(resource) = state.resource.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
-    let nodes = nodes.read().await;
+    let nodes = resource.nodes.read().await;
 
     Ok(Json(serde_json::json!({
         "type": "FeatureCollection",
         "features": [{
             "type": "Feature",
-            "properties": { "makeCanvas": "10" },
+            "properties": resource.properties,
             "geometry": { "type": "MultiPoint", "coordinates": nodes.values().collect::<Vec<_>>() }
         }]
     })))
@@ -270,10 +213,10 @@ async fn route_enemy_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(nodes) = state.enemy.get(id) else {
+    let Some(enemy) = state.enemy.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
-    let nodes = nodes.read().await
+    let nodes = enemy.nodes.read().await
         .values()
         .map(|row| row.map(|e| e as f64 / 1_000f64))
         .collect::<Vec<_>>();
@@ -282,7 +225,7 @@ async fn route_enemy_id(
         "type": "FeatureCollection",
         "features": [{
             "type": "Feature",
-            "properties": { "makeCanvas": "10" },
+            "properties": enemy.properties,
             "geometry": { "type": "MultiPoint", "coordinates": nodes }
         }]
     })))
