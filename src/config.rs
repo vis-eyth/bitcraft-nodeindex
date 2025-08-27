@@ -11,7 +11,7 @@ fn default_properties() -> Value { json!({ "makeCanvas": "10" }) }
 fn default_socket_addr() -> SocketAddr { SocketAddr::from(([0, 0, 0, 0], 3000)) }
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Entity {
     pub id: i32,
     #[serde(default = "Default::default")]
@@ -52,6 +52,8 @@ pub struct EntityGroup {
 pub struct AppState {
     pub resource: IntMap<i32, EntityGroup>,
     pub enemy: IntMap<i32, EntityGroup>,
+    pub resources_list: Vec<Entity>,
+    pub enemies_list: Vec<Entity>,
 }
 
 
@@ -89,6 +91,8 @@ impl AppConfig {
         let mut state = AppState {
             resource: IntMap::with_capacity(self.resources.len()),
             enemy: IntMap::with_capacity(self.enemies.len()),
+            resources_list: self.resources.clone(),
+            enemies_list: self.enemies.clone(),
         };
 
         sub.push_group(String::from("resources: "));

@@ -6,13 +6,22 @@ use crate::{channels::*, config::*, subscription::*};
 use std::io::{stdout, Write};
 use std::sync::Arc;
 use bindings::{sdk::DbContext, region::*};
-use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
-use axum::http::{HeaderValue, Method};
+use axum::{
+    Router, Json, 
+    routing::get, 
+    http::StatusCode, 
+    extract::{Path, State},
+    response::{Sse, sse::Event}
+};
+use axum::http::{Method};
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, mpsc::{unbounded_channel, UnboundedReceiver}};
+use tokio::sync::{oneshot, mpsc::{unbounded_channel, UnboundedReceiver}, broadcast};
+use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
+use futures_util::stream::Stream;
+use chrono;
 
 enum Message {
     Disconnect,
@@ -22,6 +31,16 @@ enum Message {
 
     EnemyInsert { id: u64, mob: i32, x: i32, z: i32 },
     EnemyDelete { id: u64, mob: i32 },
+}
+
+#[derive(Clone)]
+struct SseEvent {
+    message: String,
+}
+
+struct AppStateWithSse {
+    app_state: Arc<AppState>,
+    sse_tx: broadcast::Sender<SseEvent>,
 }
 
 impl Message {
@@ -69,6 +88,12 @@ async fn main() {
 
     let (state, db_config, sub, server_config) = config.build(sub);
 
+    // Create SSE broadcast channel
+    let (sse_tx, _) = broadcast::channel(1000);
+    let app_state_with_sse = AppStateWithSse {
+        app_state: state.clone(),
+        sse_tx: sse_tx.clone(),
+    };
 
     let (tx, rx) = unbounded_channel();
     let con = DbConnection::builder()
@@ -108,8 +133,8 @@ async fn main() {
     let (tx_sig, rx_sig) = oneshot::channel();
 
     let mut producer = Box::pin(con.run_async());
-    let consumer = tokio::spawn(consume(rx, state.clone()));
-    let server = tokio::spawn(server(rx_sig, server_config, state.clone()));
+    let consumer = tokio::spawn(consume(rx, state.clone(), sse_tx.clone()));
+    let server = tokio::spawn(server(rx_sig, server_config, Arc::new(app_state_with_sse)));
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -134,7 +159,7 @@ async fn main() {
     }
 }
 
-async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
+async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>, sse_tx: broadcast::Sender<SseEvent>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             Message::Disconnect => { break; }
@@ -142,37 +167,57 @@ async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
             Message::ResourceInsert { id, res, x, z } => {
                 if let Some(resource) = state.resource.get(res) {
                     resource.nodes.write().await.insert(id, [x, z]);
+                    // Send SSE event
+                    let _ = sse_tx.send(SseEvent {
+                        message: format!("insert:{}", res),
+                    });
                 }
             }
             Message::ResourceDelete { id, res } => {
                 if let Some(resource) = state.resource.get(res) {
                     resource.nodes.write().await.remove(id);
+                    // Send SSE event
+                    let _ = sse_tx.send(SseEvent {
+                        message: format!("delete:{}", res),
+                    });
                 }
             }
             Message::EnemyInsert { id, mob, x, z } => {
                 if let Some(enemy) = state.enemy.get(mob) {
                     enemy.nodes.write().await.insert(id, [x, z]);
+                    // Send SSE event for enemy insert
+                    let _ = sse_tx.send(SseEvent {
+                        message: format!("enemy_insert:{}", mob),
+                    });
                 }
             }
             Message::EnemyDelete { id, mob } => {
                 if let Some(enemy) = state.enemy.get(mob) {
                     enemy.nodes.write().await.remove(id);
+                    // Send SSE event for enemy delete
+                    let _ = sse_tx.send(SseEvent {
+                        message: format!("enemy_delete:{}", mob),
+                    });
                 }
             }
         }
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) {
+async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppStateWithSse>) {
     let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .route("/enemy/{id}", get(route_enemy_id))
+        .route("/events", get(route_sse_events))
+        .route("/health", get(route_health))
+        .route("/resources", get(route_resources))
+        .route("/enemies", get(route_enemies))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
         .with_state(state);
 
     if !config.cors_origin.is_empty() {
         let cors = CorsLayer::new()
-            .allow_origin([HeaderValue::from_str(&config.cors_origin).unwrap()])
+            .allow_origin(Any)
             .allow_methods([Method::GET, Method::OPTIONS])
             .allow_headers(Any);
 
@@ -190,11 +235,54 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
         .unwrap();
 }
 
+async fn route_resources(
+    state: State<Arc<AppStateWithSse>>,
+) -> Json<Value> {
+    Json(serde_json::json!(state.app_state.resources_list))
+}
+
+async fn route_enemies(
+    state: State<Arc<AppStateWithSse>>,
+) -> Json<Value> {
+    Json(serde_json::json!(state.app_state.enemies_list))
+}
+
+async fn route_health() -> Json<Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+async fn route_sse_events(
+    state: State<Arc<AppStateWithSse>>,
+) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
+    let rx = state.sse_tx.subscribe();
+    let stream = BroadcastStream::new(rx)
+        .map(|msg| {
+            match msg {
+                Ok(sse_event) => {
+                    Ok(Event::default().data(sse_event.message))
+                }
+                Err(_) => {
+                    // Handle lagged messages by sending a reconnect event
+                    Ok(Event::default().event("reconnect").data(""))
+                }
+            }
+        });
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("keep-alive"),
+    )
+}
+
 async fn route_resource_id(
     Path(id): Path<i32>,
-    state: State<Arc<AppState>>,
+    state: State<Arc<AppStateWithSse>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(resource) = state.resource.get(id) else {
+    let Some(resource) = state.app_state.resource.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
     let nodes = resource.nodes.read().await;
@@ -211,9 +299,9 @@ async fn route_resource_id(
 
 async fn route_enemy_id(
     Path(id): Path<i32>,
-    state: State<Arc<AppState>>,
+    state: State<Arc<AppStateWithSse>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(enemy) = state.enemy.get(id) else {
+    let Some(enemy) = state.app_state.enemy.get(id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
     let nodes = enemy.nodes.read().await

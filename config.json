@@ -1,6 +1,6 @@
 {
-  "db": { "region": 2 },
-  "server": { "socket_addr": "127.0.0.1:3000" },
+  "db": { "region": 8 },
+  "server": { "socket_addr": "127.0.0.1:3300", "cors_origin": "http://127.0.0.1:8000" },
   "resources": [
     { "id":        102, "name": "White Lily" },
     { "id":   70663203, "name": "Tier 10 Boulder" },
