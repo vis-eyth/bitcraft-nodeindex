@@ -4,7 +4,8 @@ use crate::{config::*, subscription::*};
 
 use std::io::{stdout, Write};
 use std::sync::Arc;
-use bindings::{sdk::DbContext, region::*, ext::send::*};
+use bindings::{sdk::DbContext, region::*, ext::con::*, ext::send::*};
+use anyhow::Result;
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
 use serde_json::Value;
@@ -70,10 +71,20 @@ async fn main() {
 
 
     let (tx, rx) = unbounded_channel();
+    let (tx_sig, rx_sig) = oneshot::channel();
+
+    let tx_shutdown = tx.clone();
     let con = DbConnection::builder()
         .configure(&db_config)
-        .on_connect(|ctx, _, _| { eprintln!("connected!"); ctx.subscribe(sub); })
-        .on_disconnect(|_, _| eprintln!("disconnected!"))
+        .on_connect(|ctx, _, _| {
+            eprintln!("connected!");
+            ctx.subscribe(sub);
+        })
+        .on_disconnect(move |_, _| {
+            eprintln!("disconnected!");
+            tx_shutdown.send(Message::Disconnect).unwrap();
+            tx_sig.send(()).unwrap();
+        })
         .with_light_mode(true)
         .build()
         .unwrap();
@@ -105,33 +116,14 @@ async fn main() {
             .map(|mob| Message::enemy_insert(&mob, new))
     );
 
-    let (tx_sig, rx_sig) = oneshot::channel();
+    let (con, _, server) = tokio::join!(
+        tokio::spawn(con.run_until(tokio::signal::ctrl_c())),
+        tokio::spawn(consume(rx, state.clone())),
+        tokio::spawn(server(rx_sig, server_config, state.clone())),
+    );
 
-    let mut producer = Box::pin(con.run_async());
-    let consumer = tokio::spawn(consume(rx, state.clone()));
-    let server = tokio::spawn(server(rx_sig, server_config, state.clone()));
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            con.disconnect().unwrap();
-            producer.await.unwrap();
-
-            tx.send(Message::Disconnect).unwrap();
-            tx_sig.send(()).unwrap();
-
-            consumer.await.unwrap();
-            server.await.unwrap();
-        },
-        _ = &mut producer => {
-            println!("server disconnect!");
-
-            tx.send(Message::Disconnect).unwrap();
-            tx_sig.send(()).unwrap();
-
-            consumer.await.unwrap();
-            server.await.unwrap();
-        },
-    }
+    if let Ok(Err(e)) = con { eprintln!("db error: {:?}", e); }
+    if let Ok(Err(e)) = server { eprintln!("server error: {:?}", e); }
 }
 
 async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
@@ -163,7 +155,7 @@ async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) {
+async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) -> Result<()> {
     let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .route("/enemy/{id}", get(route_enemy_id))
@@ -172,7 +164,7 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
 
     if !config.cors_origin.is_empty() {
         let cors = CorsLayer::new()
-            .allow_origin([HeaderValue::from_str(&config.cors_origin).unwrap()])
+            .allow_origin([HeaderValue::from_str(&config.cors_origin)?])
             .allow_methods([Method::GET, Method::OPTIONS])
             .allow_headers(Any);
 
@@ -180,14 +172,15 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
     }
 
     let addr = config.socket_addr;
-    let listener = TcpListener::bind(addr).await.unwrap();
+    let listener = TcpListener::bind(addr).await?;
 
     println!("server listening on {}", addr);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async { rx.await.unwrap(); })
-        .await
-        .unwrap();
+        .await?;
+
+    Ok(())
 }
 
 async fn route_resource_id(
