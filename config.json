@@ -325,5 +325,8 @@
     { "id": 29, "name": "Drone" },
     { "id": 30, "name": "Soldier" },
     { "id": 31, "name": "Queen" }
+  ],
+  "players": [
+    { "id": 1, "name": "All Players" }
   ]
 }
