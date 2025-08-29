@@ -5,7 +5,6 @@ use intmap::IntMap;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
-use crate::subscription::QueueSub;
 
 fn default_properties() -> Value { json!({ "makeCanvas": "10" }) }
 fn default_socket_addr() -> SocketAddr { SocketAddr::from(([0, 0, 0, 0], 3000)) }
@@ -85,34 +84,20 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn build(self, mut sub: QueueSub) -> (Arc<AppState>, DbConfig, QueueSub, ServerConfig) {
+    pub fn build(self) -> (Arc<AppState>, DbConfig, ServerConfig) {
         let mut state = AppState {
             resource: IntMap::with_capacity(self.resources.len()),
             enemy: IntMap::with_capacity(self.enemies.len()),
         };
 
-        sub.push_group(String::from("resources: "));
         for Entity { id, name: _, properties } in self.resources {
             state.resource.insert(id, EntityGroup { nodes: RwLock::new(IntMap::new()), properties });
-
-            sub.push_query(move || vec![
-                format!("SELECT res.* FROM resource_state res JOIN location_state loc ON res.entity_id = loc.entity_id WHERE res.resource_id = {};", id),
-                format!("SELECT loc.* FROM location_state loc JOIN resource_state res ON loc.entity_id = res.entity_id WHERE res.resource_id = {};", id),
-            ]);
-        }
-
-        if !self.enemies.is_empty() {
-            sub.push_group(String::from("enemies: "));
-            sub.push_query(move || vec![
-                String::from("SELECT mob.* FROM enemy_state mob JOIN mobile_entity_state loc ON mob.entity_id = loc.entity_id;"),
-                String::from("SELECT loc.* FROM mobile_entity_state loc JOIN enemy_state mob ON loc.entity_id = mob.entity_id;"),
-            ]);
         }
         for Entity { id, name: _, properties } in self.enemies {
             state.enemy.insert(id, EntityGroup { nodes: RwLock::new(IntMap::new()), properties });
         }
 
-        (Arc::new(state), self.db, sub, self.server)
+        (Arc::new(state), self.db, self.server)
     }
 }
 

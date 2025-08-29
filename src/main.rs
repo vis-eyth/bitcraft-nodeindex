@@ -2,7 +2,6 @@ mod config;
 mod subscription;
 use crate::{config::*, subscription::*};
 
-use std::io::{stdout, Write};
 use std::sync::Arc;
 use bindings::{sdk::DbContext, region::*, ext::ctx::*, ext::send::*};
 use anyhow::Result;
@@ -13,6 +12,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{oneshot, mpsc::{unbounded_channel, UnboundedReceiver}};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
+use tracing::{error, info};
 
 enum Message {
     Disconnect,
@@ -44,31 +44,30 @@ impl Message {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let config = match AppConfig::from("config.json") {
         Ok(config) => config,
         Err(err) => {
-            eprintln!("could not set configuration:");
-            eprintln!("  {}", err);
-            eprintln!("please check the configuration file (config.json) and your env vars!");
+            error!("could not set config: {:#}", err);
             return;
         }
     };
 
-    let sub = QueueSub::new().on_success(|| {
-        println!("\nactive!");
-    }).on_error(|ctx, err| {
-        println!("\nsubscription error: {:?}", err);
-        ctx.disconnect().unwrap();
-    }).on_group(|group| {
-        print!("\n{}", group);
-        stdout().flush().unwrap();
-    }).on_tick(|| {
-        print!(".");
-        stdout().flush().unwrap();
-    });
+    let (state, db_config, server_config) = config.build();
 
-    let (state, db_config, sub, server_config) = config.build(sub);
+    let mut queries = Vec::new();
+    if !state.enemy.is_empty() { queries.push(Query::ENEMY) }
+    for id in state.resource.keys() { queries.push(Query::RESOURCE(id)) }
 
+    let sub = QueueSub::with(queries)
+        .on_success(|| {
+            info!("active!");
+        })
+        .on_error(|ctx, err| {
+            error!("db error while subscribing: {:?}", err);
+            ctx.disconnect().unwrap();
+        });
 
     let (tx, rx) = unbounded_channel();
     let (tx_sig, rx_sig) = oneshot::channel();
@@ -77,11 +76,11 @@ async fn main() {
     let con = DbConnection::builder()
         .configure(&db_config)
         .on_connect(|ctx, _, _| {
-            eprintln!("connected!");
+            info!("connected!");
             ctx.subscribe(sub);
         })
         .on_disconnect(move |_, _| {
-            eprintln!("disconnected!");
+            info!("disconnected!");
             tx_shutdown.send(Message::Disconnect).unwrap();
             tx_sig.send(()).unwrap();
         })
@@ -122,8 +121,8 @@ async fn main() {
         tokio::spawn(server(rx_sig, server_config, state.clone())),
     );
 
-    if let Ok(Err(e)) = con { eprintln!("db error: {:?}", e); }
-    if let Ok(Err(e)) = server { eprintln!("server error: {:?}", e); }
+    if let Ok(Err(e)) = con { error!("db error: {:#}", e); }
+    if let Ok(Err(e)) = server { error!("server error: {:#}", e); }
 }
 
 async fn consume(mut rx: UnboundedReceiver<Message>, state: Arc<AppState>) {
@@ -174,7 +173,7 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
     let addr = config.socket_addr;
     let listener = TcpListener::bind(addr).await?;
 
-    println!("server listening on {}", addr);
+    info!("server listening on {}", addr);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async { rx.await.unwrap(); })

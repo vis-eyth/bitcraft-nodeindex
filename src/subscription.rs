@@ -1,29 +1,51 @@
-use std::collections::VecDeque;
 use bindings::{sdk::{DbContext, Error}, region::*};
+use tracing::info;
 
-enum QueueEvent {
-    GROUP(String),
-    QUERY(Box<dyn FnOnce() -> Vec<String> + Send>),
+#[derive(Debug)]
+pub enum Query {
+    ENEMY,
+    RESOURCE(i32),
+}
+
+impl Query {
+    fn query(&self) -> Vec<String> {
+        match self {
+            Query::ENEMY => vec![
+                concat!(
+                    "SELECT mob.* FROM enemy_state mob",
+                    " JOIN mobile_entity_state loc ON mob.entity_id = loc.entity_id;").to_string(),
+                concat!(
+                    "SELECT loc.* FROM mobile_entity_state loc",
+                    " JOIN enemy_state mob ON loc.entity_id = mob.entity_id;").to_string(),
+            ],
+            Query::RESOURCE(id) => vec![
+                format!(concat!(
+                    "SELECT res.* FROM resource_state res",
+                    " JOIN location_state loc ON res.entity_id = loc.entity_id",
+                    " WHERE res.resource_id = {};"), id),
+                format!(concat!(
+                    "SELECT loc.* FROM location_state loc",
+                    " JOIN resource_state res ON loc.entity_id = res.entity_id",
+                    " WHERE res.resource_id = {};"), id),
+            ]
+        }
+    }
 }
 
 pub struct QueueSub {
-    queue: VecDeque<QueueEvent>,
+    queries: Vec<Query>,
 
     on_success: Option<Box<dyn FnOnce() + Send>>,
     on_error:   Option<fn(&ErrorContext, Error)>,
-    on_group:   Option<fn(&str)>,
-    on_tick:    Option<fn()>,
 }
 
 impl QueueSub {
-    pub fn new() -> Self {
+    pub fn with(queries: Vec<Query>) -> Self {
         QueueSub {
-            queue: VecDeque::new(),
+            queries,
 
             on_success: None,
             on_error:   None,
-            on_group:   None,
-            on_tick:    None,
         }
     }
 
@@ -33,53 +55,35 @@ impl QueueSub {
     pub fn on_error(mut self, on_error: fn(&ErrorContext, Error)) -> Self {
         self.on_error = Some(on_error); self
     }
-    pub fn on_group(mut self, on_group: fn(&str)) -> Self {
-        self.on_group = Some(on_group); self
-    }
-    pub fn on_tick(mut self, on_tick: fn()) -> Self{
-        self.on_tick = Some(on_tick); self
-    }
 
 
-    pub fn push_group(&mut self, group: String) {
-        self.queue.push_back(QueueEvent::GROUP(group))
-    }
-    pub fn push_query(&mut self, query: impl FnOnce() -> Vec<String> + Send + 'static) {
-        self.queue.push_back(QueueEvent::QUERY(Box::new(query)))
-    }
-
-
-    fn next(mut self, ctx: Subscribable) {
-        loop {
-            match self.queue.pop_front() {
-                None => {
-                    if let Some(on_success) = self.on_success { on_success() }
-                    break;
-                }
-                Some(QueueEvent::GROUP(group)) => {
-                    if let Some(on_group) = self.on_group { on_group(&group) }
-                }
-                Some(QueueEvent::QUERY(query)) => {
-                    match ctx {
-                        Subscribable::CON(con) => con.subscription_builder(),
-                        Subscribable::CTX(ctx) => ctx.subscription_builder(),
-
-                    }.on_error(move |ctx, e| {
-                        if let Some(on_error) = self.on_error { on_error(&ctx, e) }
-
-                    }).on_applied(|ctx| {
-                        if let Some(on_tick) = self.on_tick { on_tick() }
-                        self.next(Subscribable::CTX(ctx))
-
-                    }).subscribe(query());
-                    break;
-                }
-            }
+    fn next<C>(self, idx: usize, ctx: &C)
+    where C: DbContext<
+        DbView=<DbConnection as DbContext>::DbView,
+        Reducers=<DbConnection as DbContext>::Reducers,
+        SetReducerFlags=<DbConnection as DbContext>::SetReducerFlags,
+        SubscriptionBuilder=<DbConnection as DbContext>::SubscriptionBuilder>
+    {
+        if self.queries.len() <= idx {
+            info!("all subscriptions active!");
+            if let Some(on_success) = self.on_success { on_success() }
+            return;
         }
+
+        let sub = &self.queries[idx];
+        let query = sub.query();
+        info!("[{:>3}/{:>3}] subscribing to {:?}", idx+1, self.queries.len(), sub);
+
+        ctx.subscription_builder()
+            .on_error(move |ctx, e| {
+                if let Some(on_error) = self.on_error { on_error(&ctx, e) }
+            })
+            .on_applied(move |ctx| {
+                self.next(idx+1, ctx)
+            })
+            .subscribe(query);
     }
 }
-
-enum Subscribable<'a> { CON(&'a DbConnection), CTX(&'a SubscriptionEventContext) }
 
 pub trait WithQueueSub {
     fn subscribe(&self, sub: QueueSub);
@@ -87,6 +91,6 @@ pub trait WithQueueSub {
 
 impl WithQueueSub for DbConnection {
     fn subscribe(&self, sub: QueueSub) {
-        sub.next(Subscribable::CON(self));
+        sub.next(0, self);
     }
 }
