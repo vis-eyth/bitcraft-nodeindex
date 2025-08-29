@@ -31,7 +31,7 @@ async fn main() {
 
     let mut queries = Vec::new();
     if !state.enemy.is_empty() { queries.push(Query::ENEMY) }
-    for id in state.resource.keys() { queries.push(Query::RESOURCE(id)) }
+    for id in state.resource.keys() { queries.push(Query::RESOURCE(*id)) }
 
     let sub = QueueSub::with(queries)
         .on_success(|| {
@@ -103,7 +103,7 @@ async fn route_resource_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(resource) = state.resource.get(id) else {
+    let Some(resource) = state.resource.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
     let nodes = resource.nodes.read().await;
@@ -122,7 +122,7 @@ async fn route_enemy_id(
     Path(id): Path<i32>,
     state: State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let Some(enemy) = state.enemy.get(id) else {
+    let Some(enemy) = state.enemy.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
     let nodes = enemy.nodes.read().await

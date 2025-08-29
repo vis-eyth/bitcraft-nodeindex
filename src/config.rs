@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::Path, sync::Arc};
 use bindings::sdk::{DbConnectionBuilder, __codegen::SpacetimeModule};
 use anyhow::{anyhow, Result};
-use intmap::IntMap;
+use hashbrown::HashMap;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
@@ -44,13 +44,13 @@ pub struct AppConfig {
 }
 
 pub struct EntityGroup {
-    pub nodes: RwLock<IntMap<u64, [i32; 2]>>,
+    pub nodes: RwLock<HashMap<u64, [i32; 2]>>,
     pub properties: Value,
 }
 
 pub struct AppState {
-    pub resource: IntMap<i32, EntityGroup>,
-    pub enemy: IntMap<i32, EntityGroup>,
+    pub resource: HashMap<i32, EntityGroup>,
+    pub enemy: HashMap<i32, EntityGroup>,
 }
 
 
@@ -86,15 +86,15 @@ impl AppConfig {
 
     pub fn build(self) -> (Arc<AppState>, DbConfig, ServerConfig) {
         let mut state = AppState {
-            resource: IntMap::with_capacity(self.resources.len()),
-            enemy: IntMap::with_capacity(self.enemies.len()),
+            resource: HashMap::with_capacity(self.resources.len()),
+            enemy: HashMap::with_capacity(self.enemies.len()),
         };
 
         for Entity { id, name: _, properties } in self.resources {
-            state.resource.insert(id, EntityGroup { nodes: RwLock::new(IntMap::new()), properties });
+            state.resource.insert(id, EntityGroup { nodes: RwLock::new(HashMap::new()), properties });
         }
         for Entity { id, name: _, properties } in self.enemies {
-            state.enemy.insert(id, EntityGroup { nodes: RwLock::new(IntMap::new()), properties });
+            state.enemy.insert(id, EntityGroup { nodes: RwLock::new(HashMap::new()), properties });
         }
 
         (Arc::new(state), self.db, self.server)
