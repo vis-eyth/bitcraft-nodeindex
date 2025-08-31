@@ -5,15 +5,33 @@ use crate::{config::*, database::*, subscription::*};
 
 use std::sync::Arc;
 use bindings::{sdk::DbContext, region::*, ext::ctx::*};
-use anyhow::Result;
+use anyhow::{anyhow, Error, Result};
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
 use axum::response::IntoResponse;
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, mpsc::unbounded_channel};
+use tokio::sync::{oneshot, mpsc::unbounded_channel, Mutex};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
+
+struct Shutdown { triggered: bool, tx: Vec<oneshot::Sender<()>> }
+impl Shutdown {
+    pub fn new() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self { triggered: false, tx: Vec::new() }))
+    }
+    fn register(&mut self) -> Option<oneshot::Receiver<()>> {
+        if self.triggered { return None }
+
+        let (tx, rx) = oneshot::channel();
+        self.tx.push(tx);
+        Some(rx)
+    }
+    fn trigger(&mut self) {
+        self.triggered = true;
+        for tx in self.tx.drain(..) { let _ = tx.send(()); }
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -28,6 +46,9 @@ async fn main() {
     };
 
     let (state, db_config, server_config) = config.build();
+
+    let shutdown = Shutdown::new();
+    register_ctrl_c(shutdown.clone());
 
     let mut queries = Vec::new();
     if !state.enemy.is_empty() { queries.push(Query::ENEMY) }
@@ -62,13 +83,33 @@ async fn main() {
 
     tokio::spawn(consume(rx, state.clone()));
 
+    let Some(signal_shutdown) = shutdown.lock().await.register() else { return };
     let (con, server) = tokio::join!(
-        tokio::spawn(con.run_until(tokio::signal::ctrl_c())),
-        tokio::spawn(server(rx_sig, server_config, state.clone())),
+        spawn(con.run_until(signal_shutdown), &shutdown),
+        spawn(server(rx_sig, server_config, state.clone()), &shutdown),
     );
 
-    if let Ok(Err(e)) = con { error!("db error: {:#}", e); }
-    if let Ok(Err(e)) = server { error!("server error: {:#}", e); }
+    if let Err(e) = con { error!("db error: {:#}", e); }
+    if let Err(e) = server { error!("server error: {:#}", e); }
+}
+
+fn register_ctrl_c(shutdown: Arc<Mutex<Shutdown>>) {
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("ctrl-c pressed, shutting down");
+        shutdown.lock().await.trigger();
+    });
+}
+
+async fn spawn<E: Into<Error> + Send + 'static>(
+    future: impl Future<Output = Result<(), E>> + Send + 'static,
+    shutdown: &Arc<Mutex<Shutdown>>
+) -> Result<()> {
+    match tokio::spawn(future).await {
+        Ok(Ok(v)) => { Ok(v) }
+        Ok(Err(e)) => { shutdown.lock().await.trigger(); Err(anyhow!(e)) }
+        Err(e) => { shutdown.lock().await.trigger(); Err(anyhow!(e)) }
+    }
 }
 
 async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) -> Result<()> {
