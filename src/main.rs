@@ -8,7 +8,7 @@ use bindings::{sdk::DbContext, region::*, ext::ctx::*};
 use anyhow::Result;
 use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
 use axum::http::{HeaderValue, Method};
-use serde_json::Value;
+use axum::response::IntoResponse;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, mpsc::unbounded_channel};
 use tower_http::compression::CompressionLayer;
@@ -99,10 +99,7 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
     Ok(())
 }
 
-async fn route_resource_id(
-    Path(id): Path<i32>,
-    state: State<Arc<AppState>>,
-) -> Result<Json<Value>, (StatusCode, String)> {
+async fn route_resource_id(Path(id): Path<i32>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let Some(resource) = state.resource.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
@@ -118,10 +115,7 @@ async fn route_resource_id(
     })))
 }
 
-async fn route_enemy_id(
-    Path(id): Path<i32>,
-    state: State<Arc<AppState>>,
-) -> Result<Json<Value>, (StatusCode, String)> {
+async fn route_enemy_id(Path(id): Path<i32>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let Some(enemy) = state.enemy.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
