@@ -39,7 +39,7 @@ async fn main() {
         })
         .on_error(|ctx, err| {
             error!("db error while subscribing: {:?}", err);
-            ctx.disconnect().unwrap();
+            let _ = ctx.disconnect();
         });
 
     let (tx, rx) = unbounded_channel();
@@ -53,7 +53,7 @@ async fn main() {
         })
         .on_disconnect(move |_, _| {
             info!("disconnected!");
-            tx_sig.send(()).unwrap();
+            let _ = tx_sig.send(());
         })
         .with_light_mode(true)
         .with_channel(tx)
@@ -93,7 +93,7 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
     info!("server listening on {}", addr);
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { rx.await.unwrap(); })
+        .with_graceful_shutdown(async { let _ = rx.await; })
         .await?;
 
     Ok(())
