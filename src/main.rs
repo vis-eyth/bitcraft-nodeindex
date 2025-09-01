@@ -111,7 +111,14 @@ async fn db(config: DbConfig, queries: Vec<Query>, state: Arc<AppState>, shutdow
             .unwrap();
 
         let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
-        con.run_until(signal).await?
+        con.run_until(signal).await?;
+
+        for data in state.resource.values() {
+            data.write().await.state = DataState::STALE;
+        }
+        for data in state.enemy.values() {
+            data.write().await.state = DataState::STALE;
+        }
     }
 }
 
@@ -148,14 +155,17 @@ async fn route_resource_id(Path(id): Path<i32>, State(state): State<Arc<AppState
     let Some(resource) = state.resource.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Resource ID not found: {}", id)))
     };
-    let nodes = resource.nodes.read().await;
+    let data = resource.read().await;
+    let nodes = data.nodes
+        .values()
+        .collect::<Vec<_>>();
 
     Ok(Json(serde_json::json!({
         "type": "FeatureCollection",
         "features": [{
             "type": "Feature",
-            "properties": resource.properties,
-            "geometry": { "type": "MultiPoint", "coordinates": nodes.values().collect::<Vec<_>>() }
+            "properties": data.properties,
+            "geometry": { "type": "MultiPoint", "coordinates": nodes }
         }]
     })))
 }
@@ -164,16 +174,17 @@ async fn route_enemy_id(Path(id): Path<i32>, State(state): State<Arc<AppState>>)
     let Some(enemy) = state.enemy.get(&id) else {
         return Err((StatusCode::NOT_FOUND, format!("Enemy ID not found: {}", id)))
     };
-    let nodes = enemy.nodes.read().await
+    let data = enemy.read().await;
+    let nodes = data.nodes
         .values()
-        .map(|row| row.map(|e| e as f64 / 1_000f64))
+        .map(|[x, z]| [*x as f64 / 1_000_f64, *z as f64 / 1_000_f64])
         .collect::<Vec<_>>();
 
     Ok(Json(serde_json::json!({
         "type": "FeatureCollection",
         "features": [{
             "type": "Feature",
-            "properties": enemy.properties,
+            "properties": data.properties,
             "geometry": { "type": "MultiPoint", "coordinates": nodes }
         }]
     })))

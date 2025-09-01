@@ -2,7 +2,7 @@ use std::sync::Arc;
 use bindings::region::DbUpdate;
 use hashbrown::{HashMap, HashSet};
 use tokio::sync::mpsc::UnboundedReceiver;
-use crate::config::AppState;
+use crate::config::{AppState, DataState};
 
 struct Update {
     insert: HashMap<u64, [i32; 2]>,
@@ -48,12 +48,17 @@ pub async fn consume(mut rx: UnboundedReceiver<DbUpdate>, state: Arc<AppState>) 
         }
 
         for (res_id, updates) in updates.drain() {
-            let Some(map) = state.resource.get(&res_id) else { continue };
-            let mut map = map.nodes.write().await;
+            let Some(data) = state.resource.get(&res_id) else { continue };
+            let mut data = data.write().await;
 
-            map.reserve(updates.additional());
-            for e_id in updates.delete { map.remove(&e_id); }
-            for (e_id, loc) in updates.insert { map.insert(e_id, loc); }
+            if data.state == DataState::STALE {
+                data.nodes.clear();
+                data.state = DataState::ACTIVE;
+            }
+
+            data.nodes.reserve(updates.additional());
+            for e_id in updates.delete { data.nodes.remove(&e_id); }
+            for (e_id, loc) in updates.insert { data.nodes.insert(e_id, loc); }
         }
 
         // build index for enemy_type for entity_id
@@ -79,12 +84,17 @@ pub async fn consume(mut rx: UnboundedReceiver<DbUpdate>, state: Arc<AppState>) 
         }
 
         for (mob_id, updates) in updates.drain() {
-            let Some(map) = state.enemy.get(&mob_id) else { continue };
-            let mut map = map.nodes.write().await;
+            let Some(data) = state.enemy.get(&mob_id) else { continue };
+            let mut data = data.write().await;
 
-            map.reserve(updates.additional());
-            for e_id in updates.delete { map.remove(&e_id); }
-            for (e_id, loc) in updates.insert { map.insert(e_id, loc); }
+            if data.state == DataState::STALE {
+                data.nodes.clear();
+                data.state = DataState::ACTIVE;
+            }
+
+            data.nodes.reserve(updates.additional());
+            for e_id in updates.delete { data.nodes.remove(&e_id); }
+            for (e_id, loc) in updates.insert { data.nodes.insert(e_id, loc); }
         }
     }
 }

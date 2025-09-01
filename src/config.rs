@@ -43,14 +43,20 @@ pub struct AppConfig {
     pub enemies: Vec<Entity>,
 }
 
-pub struct EntityGroup {
-    pub nodes: RwLock<HashMap<u64, [i32; 2]>>,
+#[derive(PartialEq)]
+pub enum DataState {
+    ACTIVE, STALE,
+}
+
+pub struct EntityState {
+    pub nodes: HashMap<u64, [i32; 2]>,
+    pub state: DataState,
     pub properties: Value,
 }
 
 pub struct AppState {
-    pub resource: HashMap<i32, EntityGroup>,
-    pub enemy: HashMap<i32, EntityGroup>,
+    pub resource: HashMap<i32, RwLock<EntityState>>,
+    pub enemy: HashMap<i32, RwLock<EntityState>>,
 }
 
 
@@ -91,10 +97,14 @@ impl AppConfig {
         };
 
         for Entity { id, name: _, properties } in self.resources {
-            state.resource.insert(id, EntityGroup { nodes: RwLock::new(HashMap::new()), properties });
+            state.resource.insert(id, RwLock::new(EntityState {
+                nodes: HashMap::new(), state: DataState::STALE, properties
+            }));
         }
         for Entity { id, name: _, properties } in self.enemies {
-            state.enemy.insert(id, EntityGroup { nodes: RwLock::new(HashMap::new()), properties });
+            state.enemy.insert(id, RwLock::new(EntityState {
+                nodes: HashMap::new(), state: DataState::STALE, properties
+            }));
         }
 
         (Arc::new(state), self.db, self.server)
