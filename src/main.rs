@@ -54,39 +54,9 @@ async fn main() {
     if !state.enemy.is_empty() { queries.push(Query::ENEMY) }
     for id in state.resource.keys() { queries.push(Query::RESOURCE(*id)) }
 
-    let sub = QueueSub::with(queries)
-        .on_success(|| {
-            info!("active!");
-        })
-        .on_error(|ctx, err| {
-            error!("db error while subscribing: {:?}", err);
-            let _ = ctx.disconnect();
-        });
-
-    let (tx, rx) = unbounded_channel();
-    let (tx_sig, rx_sig) = oneshot::channel();
-
-    let con = DbConnection::builder()
-        .configure(&db_config)
-        .on_connect(|ctx, _, _| {
-            info!("connected!");
-            ctx.subscribe(sub);
-        })
-        .on_disconnect(move |_, _| {
-            info!("disconnected!");
-            let _ = tx_sig.send(());
-        })
-        .with_light_mode(true)
-        .with_channel(tx)
-        .build()
-        .unwrap();
-
-    tokio::spawn(consume(rx, state.clone()));
-
-    let Some(signal_shutdown) = shutdown.lock().await.register() else { return };
     let (con, server) = tokio::join!(
-        spawn(con.run_until(signal_shutdown), &shutdown),
-        spawn(server(rx_sig, server_config, state.clone()), &shutdown),
+        spawn(db(db_config, queries, state.clone(), shutdown.clone()), &shutdown),
+        spawn(server(server_config, state.clone(), shutdown.clone()), &shutdown),
     );
 
     if let Err(e) = con { error!("db error: {:#}", e); }
@@ -112,7 +82,40 @@ async fn spawn<E: Into<Error> + Send + 'static>(
     }
 }
 
-async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppState>) -> Result<()> {
+async fn db(config: DbConfig, queries: Vec<Query>, state: Arc<AppState>, shutdown: Arc<Mutex<Shutdown>>) -> Result<()> {
+    let (tx, rx) = unbounded_channel();
+    tokio::spawn(consume(rx, state.clone()));
+
+    loop {
+        let sub = QueueSub::with(queries.clone())
+            .on_success(|| {
+                info!("active!");
+            })
+            .on_error(|ctx, err| {
+                error!("db error while subscribing: {:?}", err);
+                let _ = ctx.disconnect();
+            });
+
+        let con = DbConnection::builder()
+            .configure(&config)
+            .on_connect(|ctx, _, _| {
+                info!("connected!");
+                ctx.subscribe(sub);
+            })
+            .on_disconnect(move |_, _| {
+                info!("disconnected!");
+            })
+            .with_light_mode(true)
+            .with_channel(tx.clone())
+            .build()
+            .unwrap();
+
+        let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
+        con.run_until(signal).await?
+    }
+}
+
+async fn server(config: ServerConfig, state: Arc<AppState>, shutdown: Arc<Mutex<Shutdown>>) -> Result<()> {
     let mut app = Router::new()
         .route("/resource/{id}", get(route_resource_id))
         .route("/enemy/{id}", get(route_enemy_id))
@@ -133,8 +136,9 @@ async fn server(rx: oneshot::Receiver<()>, config: ServerConfig, state: Arc<AppS
 
     info!("server listening on {}", addr);
 
+    let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { let _ = rx.await; })
+        .with_graceful_shutdown(async { let _ = signal.await; })
         .await?;
 
     Ok(())

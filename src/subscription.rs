@@ -1,7 +1,7 @@
 use bindings::{sdk::{DbContext, Error}, region::*};
 use tracing::info;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Query {
     ENEMY,
     RESOURCE(i32),
