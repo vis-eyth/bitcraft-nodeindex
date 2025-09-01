@@ -6,9 +6,10 @@ use crate::{config::*, database::*, subscription::*};
 use std::sync::Arc;
 use bindings::{sdk::DbContext, region::*, ext::ctx::*};
 use anyhow::{anyhow, Error, Result};
-use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State}};
+use axum::{Router, Json, routing::get, http::StatusCode, extract::{Path, State, Query}};
 use axum::http::{HeaderValue, Method};
 use axum::response::IntoResponse;
+use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, mpsc::unbounded_channel, Mutex};
 use tower_http::compression::CompressionLayer;
@@ -51,8 +52,8 @@ async fn main() {
     register_ctrl_c(shutdown.clone());
 
     let mut queries = Vec::new();
-    if !state.enemy.is_empty() { queries.push(Query::ENEMY) }
-    for id in state.resource.keys() { queries.push(Query::RESOURCE(*id)) }
+    if !state.enemy.is_empty() { queries.push(Subscription::ENEMY) }
+    for id in state.resource.keys() { queries.push(Subscription::RESOURCE(*id)) }
 
     let (con, server) = tokio::join!(
         spawn(db(db_config, queries, state.clone(), shutdown.clone()), &shutdown),
@@ -82,24 +83,39 @@ async fn spawn<E: Into<Error> + Send + 'static>(
     }
 }
 
-async fn db(config: DbConfig, queries: Vec<Query>, state: Arc<AppState>, shutdown: Arc<Mutex<Shutdown>>) -> Result<()> {
+async fn db(config: DbConfig, queries: Vec<Subscription>, state: Arc<AppState>, shutdown: Arc<Mutex<Shutdown>>) -> Result<()> {
     let (tx, rx) = unbounded_channel();
     tokio::spawn(consume(rx, state.clone()));
 
+    let state_active = {
+        let state = state.clone();
+        move || { state.set_state(ConnectionState::ACTIVE) }
+    };
+    let state_sync = {
+        let state = state.clone();
+        move || { state.set_state(ConnectionState::SYNCHRONIZING) }
+    };
+
     loop {
+        let state_active = state_active.clone();
+        let state_sync = state_sync.clone();
+
+        info!("connecting...");
         let sub = QueueSub::with(queries.clone())
-            .on_success(|| {
+            .on_success(move || {
                 info!("active!");
+                state_active();
             })
             .on_error(|ctx, err| {
                 error!("db error while subscribing: {:?}", err);
                 let _ = ctx.disconnect();
             });
 
-        let con = DbConnection::builder()
+        if let Ok(con) = DbConnection::builder()
             .configure(&config)
-            .on_connect(|ctx, _, _| {
+            .on_connect(move |ctx, _, _| {
                 info!("connected!");
+                state_sync();
                 ctx.subscribe(sub);
             })
             .on_disconnect(move |_, _| {
@@ -108,10 +124,11 @@ async fn db(config: DbConfig, queries: Vec<Query>, state: Arc<AppState>, shutdow
             .with_light_mode(true)
             .with_channel(tx.clone())
             .build()
-            .unwrap();
+        {
+            let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
+            con.run_until(signal).await?;
+        }
 
-        let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
-        con.run_until(signal).await?;
 
         for data in state.resource.values() {
             data.write().await.state = DataState::STALE;
@@ -119,11 +136,17 @@ async fn db(config: DbConfig, queries: Vec<Query>, state: Arc<AppState>, shutdow
         for data in state.enemy.values() {
             data.write().await.state = DataState::STALE;
         }
+
+        if let Some(barrier) = state.on_disconnect() {
+            let Some(signal) = shutdown.lock().await.register() else { return Ok(()) };
+            tokio::select! { _ = signal => { return Ok(())}, _ = barrier => {} }
+        }
     }
 }
 
 async fn server(config: ServerConfig, state: Arc<AppState>, shutdown: Arc<Mutex<Shutdown>>) -> Result<()> {
     let mut app = Router::new()
+        .route("/status", get(route_status))
         .route("/resource/{id}", get(route_resource_id))
         .route("/enemy/{id}", get(route_enemy_id))
         .layer(CompressionLayer::new().gzip(true).zstd(true))
@@ -149,6 +172,27 @@ async fn server(config: ServerConfig, state: Arc<AppState>, shutdown: Arc<Mutex<
         .await?;
 
     Ok(())
+}
+
+#[derive(Deserialize)] struct Reconnect { reconnect: Option<bool> }
+
+async fn route_status(State(state): State<Arc<AppState>>, Query(query): Query<Reconnect>) -> impl IntoResponse {
+    if query.reconnect.is_some_and(|v| v) && let Some(barrier) = state.on_reconnect() {
+        info!("reconnect triggered!");
+        let _ = barrier.send(());
+    }
+
+    let body = match *state.state.lock().unwrap() {
+        ConnectionState::CONNECTING(n) =>
+            serde_json::json!({"status": format!("CONNECTING ({})", n)}),
+        ConnectionState::SYNCHRONIZING =>
+            serde_json::json!({"status": "SYNCHRONIZING"}),
+        ConnectionState::ACTIVE =>
+            serde_json::json!({"status": "ACTIVE"}),
+        ConnectionState::DISCONNECTED(_) =>
+            serde_json::json!({"status": "DISCONNECTED"}),
+    };
+    Json(body)
 }
 
 async fn route_resource_id(Path(id): Path<i32>, State(state): State<Arc<AppState>>) -> impl IntoResponse {

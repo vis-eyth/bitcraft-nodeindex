@@ -2,15 +2,15 @@ use bindings::{sdk::{DbContext, Error}, region::*};
 use tracing::info;
 
 #[derive(Clone, Debug)]
-pub enum Query {
+pub enum Subscription {
     ENEMY,
     RESOURCE(i32),
 }
 
-impl Query {
+impl Subscription {
     fn query(&self) -> Vec<String> {
         match self {
-            Query::ENEMY => vec![
+            Subscription::ENEMY => vec![
                 concat!(
                     "SELECT mob.* FROM enemy_state mob",
                     " JOIN mobile_entity_state loc ON mob.entity_id = loc.entity_id;").to_string(),
@@ -18,7 +18,7 @@ impl Query {
                     "SELECT loc.* FROM mobile_entity_state loc",
                     " JOIN enemy_state mob ON loc.entity_id = mob.entity_id;").to_string(),
             ],
-            Query::RESOURCE(id) => vec![
+            Subscription::RESOURCE(id) => vec![
                 format!(concat!(
                     "SELECT res.* FROM resource_state res",
                     " JOIN location_state loc ON res.entity_id = loc.entity_id",
@@ -33,14 +33,14 @@ impl Query {
 }
 
 pub struct QueueSub {
-    queries: Vec<Query>,
+    queries: Vec<Subscription>,
 
     on_success: Option<Box<dyn FnOnce() + Send>>,
     on_error:   Option<fn(&ErrorContext, Error)>,
 }
 
 impl QueueSub {
-    pub fn with(queries: Vec<Query>) -> Self {
+    pub fn with(queries: Vec<Subscription>) -> Self {
         QueueSub {
             queries,
 

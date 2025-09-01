@@ -1,10 +1,12 @@
 use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::mem::replace;
+use std::sync::Mutex as SyncMutex;
 use bindings::sdk::{DbConnectionBuilder, __codegen::SpacetimeModule};
 use anyhow::{anyhow, Result};
 use hashbrown::HashMap;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, RwLock};
 
 fn default_properties() -> Value { json!({ "makeCanvas": "10" }) }
 fn default_socket_addr() -> SocketAddr { SocketAddr::from(([0, 0, 0, 0], 3000)) }
@@ -54,9 +56,52 @@ pub struct EntityState {
     pub properties: Value,
 }
 
+pub enum ConnectionState {
+    CONNECTING(i32), SYNCHRONIZING, ACTIVE, DISCONNECTED(oneshot::Sender<()>),
+}
+
 pub struct AppState {
+    pub state: SyncMutex<ConnectionState>,
     pub resource: HashMap<i32, RwLock<EntityState>>,
     pub enemy: HashMap<i32, RwLock<EntityState>>,
+}
+
+impl AppState {
+    pub fn set_state(&self, new: ConnectionState) {
+        let mut state = self.state.lock().unwrap();
+        *state = new;
+    }
+
+    pub fn on_disconnect(&self) -> Option<oneshot::Receiver<()>> {
+        let mut state = self.state.lock().unwrap();
+        match *state {
+            ConnectionState::CONNECTING(1) => {
+                let (tx, rx) = oneshot::channel();
+                *state = ConnectionState::DISCONNECTED(tx);
+                Some(rx)
+            }
+            ConnectionState::CONNECTING(n) => {
+                *state = ConnectionState::CONNECTING(n - 1);
+                None
+            }
+            _ => {
+                *state = ConnectionState::CONNECTING(5);
+                None
+            }
+        }
+    }
+
+    pub fn on_reconnect(&self) -> Option<oneshot::Sender<()>> {
+        let mut state = self.state.lock().unwrap();
+
+        let prev: ConnectionState = replace(&mut state, ConnectionState::CONNECTING(5));
+        if let ConnectionState::DISCONNECTED(tx) = prev {
+            return Some(tx)
+        }
+
+        let _: ConnectionState = replace(&mut state, prev);
+        None
+    }
 }
 
 
@@ -92,6 +137,7 @@ impl AppConfig {
 
     pub fn build(self) -> (Arc<AppState>, DbConfig, ServerConfig) {
         let mut state = AppState {
+            state: SyncMutex::new(ConnectionState::CONNECTING(5)),
             resource: HashMap::with_capacity(self.resources.len()),
             enemy: HashMap::with_capacity(self.enemies.len()),
         };
